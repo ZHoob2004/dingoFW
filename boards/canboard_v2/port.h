@@ -89,6 +89,10 @@
 #define CAN_THREAD_STACK 256
 
 #define NUM_TX_MSGS 13
+// Native digital-input status frame: TxMsg2.
+#define CAN_FAST_INPUT_STATUS_INDEX 2
+// Analog-derived switch and rotary states are transmitted on this frame.
+#define CAN_ANALOG_INPUT_STATUS_INDEX 2
 #define DEFAULT_BASE_ID 0x640
 
 #define ADC1_NUM_CHANNELS 6

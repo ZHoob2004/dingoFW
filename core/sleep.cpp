@@ -105,7 +105,7 @@ bool ComputeLocalKeepAwake()
 }
 } // namespace
 
-void NetworkSleepUpdate()
+void NetworkSleepUpdate(bool additionalInputActivity)
 {
     if (!bNetworkKeepAwakeEnabled)
     {
@@ -126,7 +126,7 @@ void NetworkSleepUpdate()
     }
 
     const uint16_t inputs = EnabledDigitalInputMask();
-    if (inputs != nPreviousInputMask)
+    if (inputs != nPreviousInputMask || additionalInputActivity)
     {
         nPreviousInputMask = inputs;
         nLastInputChange = now;

@@ -80,7 +80,48 @@ bool bBootloaderRequest;
 
 void InitVarMap();
 void CyclicUpdate();
-void States();
+void States(bool additionalInputActivity);
+
+#if defined(CAN_FAST_INPUT_STATUS_INDEX)
+static uint32_t nLastFastInputMask;
+
+static uint32_t ReadFastInputMask()
+{
+    static_assert(NUM_DIG_INPUTS <= 32);
+    uint32_t mask = 0;
+    #if defined(CAN_FAST_DIGITAL_INPUT_COUNT)
+    constexpr uint8_t count = CAN_FAST_DIGITAL_INPUT_COUNT;
+    #else
+    constexpr uint8_t count = NUM_DIG_INPUTS;
+    #endif
+    for (uint8_t i = 0; i < count; ++i)
+        if (stConfig.stDigInput[i].bEnabled && GetDigInputVal(i))
+            mask |= (1UL << i);
+    return mask;
+}
+#endif
+
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+static uint64_t nLastAnalogInputState;
+static bool bAnalogStatusInitialized;
+
+// Compare only discrete values, never raw ADC counts or millivolts.
+static uint64_t ReadAnalogInputState()
+{
+    static_assert(NUM_ANALOG_INPUTS * 9 <= 64);
+    uint64_t state = 0;
+    for (uint8_t i = 0; i < NUM_ANALOG_INPUTS; ++i)
+    {
+        const auto& input = stConfig.stAnalogInput[i];
+        if (!input.bEnabled)
+            continue;
+        const uint64_t value = (input.stRotary.bEnabled ? static_cast<uint64_t>(GetRotarySwitchPos(i)) : 0) |
+                               ((input.stSwitch.bEnabled ? static_cast<uint64_t>(GetAnalogSwitchVal(i)) : 0) << 8);
+        state |= value << (9U * i);
+    }
+    return state;
+}
+#endif
 
 struct DeviceThread : chibios_rt::BaseStaticThread<DEVICE_THREAD_STACK>
 {
@@ -92,7 +133,26 @@ struct DeviceThread : chibios_rt::BaseStaticThread<DEVICE_THREAD_STACK>
         {
             LockConfig();
             CyclicUpdate();
-            States();
+            bool analogChanged = false;
+            #if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+            const uint64_t analogState = ReadAnalogInputState();
+            // Publish the first processed ADC-derived state, even when zero.
+            analogChanged = analogState != nLastAnalogInputState ||
+                (!bAnalogStatusInitialized && HasAnalogLogicalInputs());
+            nLastAnalogInputState = analogState;
+            bAnalogStatusInitialized = true;
+            #endif
+
+            // Publish network demand before signaling the CAN thread.
+            States(analogChanged);
+
+            #if defined(CAN_FAST_INPUT_STATUS_INDEX)
+            const uint32_t mask = ReadFastInputMask();
+            const bool digitalChanged = mask != nLastFastInputMask;
+            nLastFastInputMask = mask;
+            if (digitalChanged || analogChanged)
+                RequestCanInputStatus(digitalChanged, analogChanged);
+            #endif
             UnlockConfig();
             chThdSleepMilliseconds(2);
         }
@@ -160,6 +220,18 @@ void InitDevice()
     if (InitAdc() != HAL_RET_SUCCESS)
         Error::SetFatalError(FatalErrorType::ErrADC, MsgSrc::Init);
         
+    #if defined(CAN_FAST_INPUT_STATUS_INDEX)
+    // Sample configured inputs before the first cyclic transmission.
+    for (uint8_t i = 0; i < NUM_DIG_INPUTS; ++i)
+        digIn[i].Update();
+    nLastFastInputMask = ReadFastInputMask();
+    #endif
+
+    #if CAN_SLEEP
+    NetworkSleepUpdate();
+    palClearLine(LINE_CAN_STANDBY);
+    #endif
+
     if (InitCan(&stConfig.stDevice) != HAL_RET_SUCCESS) // Starts CAN threads
         Error::SetFatalError(FatalErrorType::ErrCAN, MsgSrc::Init);
 
@@ -179,11 +251,8 @@ void InitDevice()
 
     InitInfoMsgs();
 
-    #if CAN_SLEEP
-    palClearLine(LINE_CAN_STANDBY);
-    #if !HAS_SE_LEDS
+    #if CAN_SLEEP && !HAS_SE_LEDS
     palClearLine(LINE_LED_STATUS); // Active-low status LED on
-    #endif
     #endif
 
     #if (HAS_BATT_VOLT_SENSE || HAS_EXT_TEMP_SENSOR)
@@ -197,7 +266,7 @@ void InitDevice()
     #endif
 }
 
-void States()
+void States(bool additionalInputActivity)
 {
     #if HAS_EXT_TEMP_SENSOR
     if (bDeviceCriticalTemp)
@@ -252,7 +321,7 @@ void States()
     #endif
 
     #if CAN_SLEEP
-    NetworkSleepUpdate();
+    NetworkSleepUpdate(additionalInputActivity);
     if (CheckEnterSleep())
     {
         #if HAS_SE_LEDS

@@ -28,7 +28,7 @@ MEMORY
     flash5 (rx) : org = 0x00000000, len = 0
     flash6 (rx) : org = 0x00000000, len = 0
     flash7 (rx) : org = 0x00000000, len = 0
-    ram0   (wx) : org = 0x20000000, len = 128k    /* SRAM1 + SRAM2 */
+    ram0   (wx) : org = 0x20000000, len = 128k - 16 /* SRAM1 + SRAM2, reserve OpenBLT handoff */
     ram1   (wx) : org = 0x20000000, len = 112k    /* SRAM1 */
     ram2   (wx) : org = 0x00000000, len = 16k     /* SRAM2 */
     ram3   (wx) : org = 0x00000000, len = 0

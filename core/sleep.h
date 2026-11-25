@@ -12,7 +12,7 @@ void EnterSleep();
 void EnableLineEventWithPull(ioline_t line, InputPull pull);
 
 // Optional network sleep coordination.
-void NetworkSleepUpdate();
+void NetworkSleepUpdate(bool additionalInputActivity = false);
 bool NetworkSleepCanEnter();
 bool NetworkCyclicTxAllowed();
 bool NetworkFeatureEnabled();

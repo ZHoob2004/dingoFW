@@ -12,3 +12,10 @@ uint32_t GetLastCanRxTime();
 uint32_t GetLastCanTxTime();
 // Stop all transmit except replies to dingoConfig, used before sleep
 void SetCanTxQuiet(bool bQuiet);
+
+#if defined(CAN_FAST_INPUT_STATUS_INDEX)
+void RequestCanInputStatus(bool digitalChanged, bool analogChanged);
+#endif
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+bool HasAnalogLogicalInputs();
+#endif

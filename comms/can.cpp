@@ -29,11 +29,145 @@ static CANDriver *const canDrivers[NUM_CAN_BUSES] = {
     #endif
 };
 
+#if defined(CAN_FAST_INPUT_STATUS_INDEX)
+static_assert(CAN_FAST_INPUT_STATUS_INDEX < NUM_TX_MSGS);
+static_assert(CAN_WAKE_STATUS_INTERVAL_MS > 0);
+static_assert(CAN_WAKE_STATUS_BURST_MS >= CAN_WAKE_STATUS_INTERVAL_MS);
+static constexpr eventmask_t CAN_DIGITAL_STATUS_EVENT = EVENT_MASK(0);
+static constexpr eventmask_t CAN_ANALOG_STATUS_EVENT = EVENT_MASK(1);
+static constexpr eventmask_t CAN_INPUT_STATUS_EVENTS =
+    CAN_DIGITAL_STATUS_EVENT | CAN_ANALOG_STATUS_EVENT;
+
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+static_assert(CAN_ANALOG_INPUT_STATUS_INDEX < NUM_TX_MSGS);
+
+bool HasAnalogLogicalInputs()
+{
+    for (uint8_t i = 0; i < NUM_ANALOG_INPUTS; ++i)
+    {
+        const auto& input = stConfig.stAnalogInput[i];
+        if (input.bEnabled && (input.stSwitch.bEnabled || input.stRotary.bEnabled))
+            return true;
+    }
+    return false;
+}
+#endif
+
+// Only the cyclic TX thread builds built-in status frames, including
+// the CANBoard heartbeat. Ordinary input transitions send once, without
+// resetting or accelerating the regular cyclic telemetry schedule.
+static void PostCyclicStatus(uint8_t index)
+{
+    CANTxMsg msg = TxMsgs[index]();
+    if (!msg.bSend)
+        return;
+    PostTxFrame(&msg.frame);
+}
+
+static uint32_t TimeUntil(uint32_t now, uint32_t last, uint32_t interval)
+{
+    const uint32_t elapsed = now - last;
+    return elapsed >= interval ? 0U : interval - elapsed;
+}
+
+static void CanFastInputCyclicLoop()
+{
+    const uint32_t bootStart = SYS_TIME;
+    uint32_t lastFull = bootStart;
+    uint32_t lastWakeRetry = bootStart;
+    bool first = true;
+    // A bounded boot-only retry lets newly waking peers receive the
+    // current input state. It is not restarted by normal input changes.
+    bool wakeBurst = NetworkFeatureEnabled();
+    eventmask_t events = 0;
+
+    while (true)
+    {
+        const uint32_t now = SYS_TIME;
+        if (wakeBurst && now - bootStart >= CAN_WAKE_STATUS_BURST_MS)
+            wakeBurst = false;
+
+        const bool fullDue = first || now - lastFull >= CAN_TX_CYCLIC_MSG_DELAY;
+        const bool wakeRetryDue = wakeBurst &&
+            now - lastWakeRetry >= CAN_WAKE_STATUS_INTERVAL_MS;
+        bool digitalDue = fullDue || wakeRetryDue ||
+            (events & CAN_DIGITAL_STATUS_EVENT) != 0;
+
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+        const bool analogDue = fullDue ||
+            (events & CAN_ANALOG_STATUS_EVENT) != 0 ||
+            (wakeRetryDue && HasAnalogLogicalInputs());
+#if CAN_ANALOG_INPUT_STATUS_INDEX == CAN_FAST_INPUT_STATUS_INDEX
+        // CANBoard packs both kinds of logical state in one frame.
+        digitalDue = digitalDue || analogDue;
+#endif
+#endif
+
+        if ((fullDue || events != 0) && !bTxQuiet && !IsParamOpInProgress())
+        {
+            CANTxFrame networkMsg{};
+            if (NetworkBuildKeepAwakeFrame(networkMsg))
+                PostTxFrame(&networkMsg);
+        }
+
+        // Respect the same configuration and TX-mute gates as regular telemetry.
+        if (!IsParamOpInProgress() && !bTxQuiet && !*pVarMap[stConfig.stDevice.nMuteCanTxInput] && NetworkCyclicTxAllowed())
+        {
+            if (digitalDue)
+                PostCyclicStatus(CAN_FAST_INPUT_STATUS_INDEX);
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX) && CAN_ANALOG_INPUT_STATUS_INDEX != CAN_FAST_INPUT_STATUS_INDEX
+            if (analogDue)
+                PostCyclicStatus(CAN_ANALOG_INPUT_STATUS_INDEX);
+#endif
+            if (fullDue)
+            {
+                for (uint8_t i = 0; i < NUM_TX_MSGS; ++i)
+                {
+                    if (i == CAN_FAST_INPUT_STATUS_INDEX)
+                        continue;
+#if defined(CAN_ANALOG_INPUT_STATUS_INDEX)
+                    if (i == CAN_ANALOG_INPUT_STATUS_INDEX)
+                        continue;
+#endif
+                    PostCyclicStatus(i);
+                }
+            }
+        }
+        if (fullDue)
+        {
+            lastFull = now;
+            first = false;
+        }
+        if (wakeRetryDue)
+            lastWakeRetry = now;
+
+        if (chThdShouldTerminateX())
+            chThdExit(MSG_OK);
+
+        const uint32_t after = SYS_TIME;
+        uint32_t delay = TimeUntil(after, lastFull, CAN_TX_CYCLIC_MSG_DELAY);
+        if (wakeBurst)
+        {
+            const uint32_t nextRetry = TimeUntil(after, lastWakeRetry, CAN_WAKE_STATUS_INTERVAL_MS);
+            const uint32_t burstEnd = TimeUntil(after, bootStart, CAN_WAKE_STATUS_BURST_MS);
+            if (nextRetry < delay)
+                delay = nextRetry;
+            if (burstEnd < delay)
+                delay = burstEnd;
+        }
+        events = chEvtWaitAnyTimeout(CAN_INPUT_STATUS_EVENTS, TIME_MS2I(delay));
+    }
+}
+#endif
+
 static THD_WORKING_AREA(waCanCyclicTxThread, CAN_THREAD_STACK);
 void CanCyclicTxThread(void *)
 {
     chRegSetThreadName("CAN Cyclic Tx");
 
+    #if defined(CAN_FAST_INPUT_STATUS_INDEX)
+    CanFastInputCyclicLoop();
+    #else
     CANTxMsg msg;
 
     while (1)
@@ -65,6 +199,7 @@ void CanCyclicTxThread(void *)
 
         chThdSleepMilliseconds(CAN_TX_CYCLIC_MSG_DELAY);
     }
+    #endif
 }
 
 static THD_WORKING_AREA(waCanTxThread[NUM_CAN_BUSES], CAN_THREAD_STACK);
@@ -173,6 +308,19 @@ void CanRxThread(void *arg)
 static thread_t *canCyclicTxThreadRef;
 static thread_t *canTxThreadRef[NUM_CAN_BUSES];
 static thread_t *canRxThreadRef[NUM_CAN_BUSES];
+
+#if defined(CAN_FAST_INPUT_STATUS_INDEX)
+void RequestCanInputStatus(bool digitalChanged, bool analogChanged)
+{
+    eventmask_t events = 0;
+    if (digitalChanged)
+        events |= CAN_DIGITAL_STATUS_EVENT;
+    if (analogChanged)
+        events |= CAN_ANALOG_STATUS_EVENT;
+    if (events != 0 && canCyclicTxThreadRef != nullptr)
+        chEvtSignal(canCyclicTxThreadRef, events);
+}
+#endif
 
 msg_t InitCan(Config_Device *conf)
 {

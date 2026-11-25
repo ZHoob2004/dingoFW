@@ -5,6 +5,9 @@ void Analog_Input::Update()
     if(!pConfig->bEnabled)
     {
         fVal = 0;
+        fValMillivolts = 0;
+        fSwitchVal = 0;
+        fRotaryPos = 0;
         return;
     }
 

@@ -28,12 +28,12 @@ MEMORY
     flash5 (rx) : org = 0x00000000, len = 0
     flash6 (rx) : org = 0x00000000, len = 0
     flash7 (rx) : org = 0x00000000, len = 0
-    ram0   (wx) : org = 0x20000000, len = 128k  /* SRAM1+SRAM2+CCM */
+    ram0   (wx) : org = 0x20000000, len = 128k - 16 /* SRAM1+SRAM2+CCM, reserve OpenBLT handoff */
     ram1   (wx) : org = 0x20000000, len = 96k   /* SRAM1+SRAM2 */
     ram2   (wx) : org = 0x20000000, len = 80k   /* SRAM1 */
     ram3   (wx) : org = 0x20014000, len = 16k   /* SRAM2 */
-    ram4   (wx) : org = 0x20018000, len = 32k   /* CCM */
-    ram5   (wx) : org = 0x10000000, len = 32k   /* CCM alias */
+    ram4   (wx) : org = 0x20018000, len = 32k - 16 /* CCM, reserve OpenBLT handoff */
+    ram5   (wx) : org = 0x10000000, len = 32k - 16 /* CCM alias, reserve OpenBLT handoff */
     ram6   (wx) : org = 0x00000000, len = 0
     ram7   (wx) : org = 0x00000000, len = 0
 }

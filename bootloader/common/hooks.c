@@ -1,5 +1,6 @@
 // OpenBLT hooks shared by every dingo port, settings in dingo_blt.h
 #include "boot.h"
+#include "boot_state.h"
 #include DINGO_DEVICE_H
 
 static blt_bool bStay;
@@ -17,12 +18,47 @@ static void EnterDfu(void)
 }
 #endif
 
+// Capture reset cause before HAL_MspDeInit() clears RCC reset flags.
+static void DingoStartupStateInit(volatile blt_int32u *pHandoff)
+{
+  const blt_int32u nResetFlags = RCC->CSR;
+  blt_int32u nPowerResetMask = 0;
+#ifdef RCC_CSR_PORRSTF
+  nPowerResetMask |= RCC_CSR_PORRSTF;
+#endif
+#ifdef RCC_CSR_BORRSTF
+  nPowerResetMask |= RCC_CSR_BORRSTF;
+#endif
+#ifdef RCC_CSR_V18PWRRSTF
+  nPowerResetMask |= RCC_CSR_V18PWRRSTF;
+#endif
+
+  const blt_int32u nWarmResetMask = RCC_CSR_SFTRSTF | RCC_CSR_PINRSTF |
+                                   RCC_CSR_IWDGRSTF | RCC_CSR_WWDGRSTF;
+  // A reset during cold initialization, an unknown reset cause or a power
+  // reset must retain the full delay, even if SRAM retained an old marker.
+  const blt_bool bWarm = (pHandoff[DINGO_BOOT_STATE_WORD] == DINGO_BOOT_STATE_READY) &&
+                         (nPowerResetMask != 0u) &&
+                         ((nResetFlags & nPowerResetMask) == 0u) &&
+                         ((nResetFlags & nWarmResetMask) != 0u) &&
+                         ((nResetFlags & (RCC_CSR_LPWRRSTF
+#ifdef RCC_CSR_OBLRSTF
+                                          | RCC_CSR_OBLRSTF
+#endif
+                                          )) == 0u);
+  pHandoff[DINGO_BOOT_STATE_WORD] = bWarm ? DINGO_BOOT_STATE_WARM : 0u;
+
+  RCC->CSR |= RCC_CSR_RMVF;
+  __DSB();
+}
+
 // Called first thing in main(), before the CAN driver reads the ids and bitrate
 void DingoHandoffInit(void)
 {
   // CanBitrate enum order, core/enums.h
   static const blt_int32u aBaud[] = { 1000000u, 500000u, 250000u, 125000u, 100000u };
   volatile blt_int32u *pHandoff = (volatile blt_int32u *)DINGO_HANDOFF_ADDR;
+  DingoStartupStateInit(pHandoff);
 
 #ifdef DINGO_SYSTEM_MEMORY
   if (pHandoff[0] == DINGO_BL_DFU_MAGIC)

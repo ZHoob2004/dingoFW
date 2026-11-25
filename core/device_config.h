@@ -7,6 +7,10 @@
 #define CAN_TX_CYCLIC_MSG_DELAY 100 //ms
 #define CAN_TX_MSG_SPLIT 30 //us
 
+// Startup-only input status retransmission allows peers time to initialize after wake.
+#define CAN_WAKE_STATUS_INTERVAL_MS 10
+#define CAN_WAKE_STATUS_BURST_MS 100
+
 #define USB_TX_MSG_SPLIT 30 //us
 
 #define KEYPAD_TX_MSG_DELAY 100 //ms

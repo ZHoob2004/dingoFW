@@ -79,6 +79,8 @@
 #define CAN_THREAD_STACK 512
 
 #define NUM_TX_MSGS 51
+// Native digital-input status frame: TxMsg0.
+#define CAN_FAST_INPUT_STATUS_INDEX 0
 #define DEFAULT_BASE_ID 0x0DE
 
 #define ADC1_NUM_CHANNELS 7

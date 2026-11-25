@@ -32,7 +32,7 @@ MEMORY
     ram1   (wx) : org = 0x00000000, len = 0
     ram2   (wx) : org = 0x00000000, len = 0
     ram3   (wx) : org = 0x00000000, len = 0
-    ram4   (wx) : org = 0x10000000, len = 4k
+    ram4   (wx) : org = 0x10000000, len = 4k - 16 /* OpenBLT handoff */
     ram5   (wx) : org = 0x00000000, len = 0
     ram6   (wx) : org = 0x00000000, len = 0
     ram7   (wx) : org = 0x00000000, len = 0

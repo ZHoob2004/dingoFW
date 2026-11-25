@@ -3,7 +3,7 @@
 // The app hands the bootloader its CAN settings in a RAM block that survives the reset (see RequestBootloaderCan()
 // in boards/<mcu>/mcu_utils.cpp), the bootloader never reads the app config. That keeps the bootloader independent
 // of the DeviceConfig layout, it's flashed once and never updated with the app.
-//   [0] magic  [1] base id  [2] CanBitrate index
+//   [0] magic  [1] base id  [2] CanBitrate index  [3] startup state (boot_state.h)
 // Without the magic (power cycle mid-update, no valid app) the port's DINGO_DEFAULT_BASE_ID at 500K is used.
 #pragma once
 

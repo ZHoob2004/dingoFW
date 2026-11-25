@@ -92,6 +92,10 @@
 #define CAN_THREAD_STACK 512
 
 #define NUM_TX_MSGS 37
+// Native digital-input status frame: TxMsg0.
+#define CAN_FAST_INPUT_STATUS_INDEX 0
+// Only inputs 1-2 are encoded in the digital status frame.
+#define CAN_FAST_DIGITAL_INPUT_COUNT 2
 #define DEFAULT_BASE_ID 0x0DE
 
 #define ADC1_NUM_CHANNELS 7
