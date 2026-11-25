@@ -181,6 +181,9 @@ void InitDevice()
 
     #if CAN_SLEEP
     palClearLine(LINE_CAN_STANDBY);
+    #if !HAS_SE_LEDS
+    palClearLine(LINE_LED_STATUS); // Active-low status LED on
+    #endif
     #endif
 
     #if (HAS_BATT_VOLT_SENSE || HAS_EXT_TEMP_SENSOR)
@@ -251,8 +254,12 @@ void States()
     #if CAN_SLEEP
     if (CheckEnterSleep())
     {
+        #if HAS_SE_LEDS
         statusLed.Solid(false);
         errorLed.Solid(false);
+        #else
+        palSetLine(LINE_LED_STATUS); // Active-low status LED off
+        #endif
         eState = DeviceState::Sleep;
     }
 

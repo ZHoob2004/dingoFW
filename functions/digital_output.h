@@ -25,6 +25,11 @@ public:
     }
 
     void Update();
+    void ForceOff()
+    {
+        palClearLine(m_line);
+        fVal = 0;
+    }
 
     float fVal;
 

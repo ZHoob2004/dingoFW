@@ -14,3 +14,5 @@
 
 // OpenBLT handoff block, bootloader/common/dingo_blt.h. Top of CCM, survives the reset
 #define BL_HANDOFF_ADDR 0x10000FF0
+
+void EnterStopMode();

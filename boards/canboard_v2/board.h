@@ -217,8 +217,13 @@
 #define LINE_AI5                    PAL_LINE(GPIOA, 4U)
 #define LINE_SWDIO                  PAL_LINE(GPIOA, 13U)
 #define LINE_SWCLK                  PAL_LINE(GPIOA, 14U)
-#define LINE_CAN_ID_1               PAL_LINE(GPIOB, 7U)
-#define LINE_CAN_ID_2               PAL_LINE(GPIOB, 6U)
+// Low-power operation requires MCU control of the LED and MCP2562 STBY.
+// On CANBoard v2 hardware with an always-on LED and STBY tied to ground,
+// MCU STOP still works but the LED and transceiver remain powered.
+// To reduce board-level standby current, connect the LED to PB7 and STBY
+// to PB6 (isolated from ground), or use hardware with these connections.
+#define LINE_LED_STATUS             PAL_LINE(GPIOB, 7U) // Active-low LED (anode to 3.3 V)
+#define LINE_CAN_STANDBY            PAL_LINE(GPIOB, 6U) // MCP2562 STBY: high = standby
 #define LINE_CAN_RX                 PAL_LINE(GPIOA, 11U)
 #define LINE_CAN_TX                 PAL_LINE(GPIOA, 12U)
 
@@ -386,8 +391,8 @@
  * PB3  - DO2                       (output pushpull maximum).
  * PB4  - DO3                       (output pushpull maximum).
  * PB5  - DO4                       (output pushpull maximum).
- * PB6  - CAN_ID_2                  (input pulldown).
- * PB7  - CAN_ID_1                  (input pulldown).
+ * PB6  - CAN_STANDBY               (output pushpull, low = normal).
+ * PB7  - LED_STATUS                (output pushpull, low = LED on).
  * PB8  - PIN8                      (input pullup).
  * PB9  - PIN9                      (input pullup).
  * PB10 - PIN10                     (input pullup).
@@ -403,8 +408,8 @@
                                      PIN_MODE_OUTPUT(GPIOB_PIN3) |          \
                                      PIN_MODE_OUTPUT(GPIOB_PIN4) |          \
                                      PIN_MODE_OUTPUT(GPIOB_PIN5) |          \
-                                     PIN_MODE_INPUT(GPIOB_PIN6) |           \
-                                     PIN_MODE_INPUT(GPIOB_PIN7) |           \
+                                     PIN_MODE_OUTPUT(GPIOB_PIN6) |           \
+                                     PIN_MODE_OUTPUT(GPIOB_PIN7) |           \
                                      PIN_MODE_INPUT(GPIOB_PIN8) |           \
                                      PIN_MODE_INPUT(GPIOB_PIN9) |           \
                                      PIN_MODE_INPUT(GPIOB_PIN10) |          \
@@ -451,8 +456,8 @@
                                      PIN_PUPDR_FLOATING(GPIOB_PIN3) |       \
                                      PIN_PUPDR_FLOATING(GPIOB_PIN4) |       \
                                      PIN_PUPDR_FLOATING(GPIOB_PIN5) |       \
-                                     PIN_PUPDR_PULLDOWN(GPIOB_PIN6) |       \
-                                     PIN_PUPDR_PULLDOWN(GPIOB_PIN7) |       \
+                                     PIN_PUPDR_FLOATING(GPIOB_PIN6) |       \
+                                     PIN_PUPDR_FLOATING(GPIOB_PIN7) |       \
                                      PIN_PUPDR_PULLUP(GPIOB_PIN8) |         \
                                      PIN_PUPDR_PULLUP(GPIOB_PIN9) |         \
                                      PIN_PUPDR_PULLUP(GPIOB_PIN10) |        \
