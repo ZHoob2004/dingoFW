@@ -252,6 +252,7 @@ void States()
     #endif
 
     #if CAN_SLEEP
+    NetworkSleepUpdate();
     if (CheckEnterSleep())
     {
         #if HAS_SE_LEDS

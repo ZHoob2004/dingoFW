@@ -8,8 +8,13 @@
 #include "can_frame.h"
 
 #include <iterator>
+#include <atomic>
+#if CAN_SLEEP
+#include "sleep.h"
+#endif
 
-static volatile uint32_t nLastCanRxTime;
+static std::atomic<uint32_t> nLastCanRxTime{0};
+static std::atomic<uint32_t> nLastCanTxTime{0};
 // While set only replies to dingoConfig are sent, see SetCanTxQuiet()
 static volatile bool bTxQuiet;
 
@@ -34,7 +39,17 @@ void CanCyclicTxThread(void *)
     while (1)
     {
 
-        if (!IsParamOpInProgress() && !bTxQuiet && !*pVarMap[stConfig.stDevice.nMuteCanTxInput])
+        #if CAN_SLEEP
+        // Keep-awake requests are independent of the regular cyclic telemetry.
+        CANTxFrame networkMsg{};
+        if (!bTxQuiet && !IsParamOpInProgress() && NetworkBuildKeepAwakeFrame(networkMsg))
+            PostTxFrame(&networkMsg);
+        #endif
+        if (!IsParamOpInProgress() && !bTxQuiet && !*pVarMap[stConfig.stDevice.nMuteCanTxInput]
+            #if CAN_SLEEP
+            && NetworkCyclicTxAllowed()
+            #endif
+            )
         {
             for (uint8_t i = 0; i < NUM_TX_MSGS; i++)
             {
@@ -79,8 +94,16 @@ void CanTxThread(void *arg)
             const bool bConfigReply = (nBus == 0) && !CanIsExt(msg) &&
                                       (CanId(msg) == (uint32_t)(stConfig.stDevice.nBaseId + CONFIG_TX_OFFSET));
 
-            if (!bTxQuiet || bConfigReply)
-                canTransmitTimeout(canDrivers[nBus], CAN_ANY_MAILBOX, &msg, TIME_MS2I(10));
+            // Quiet both buses before MCU STOP; configuration replies remain available.
+            const bool bNetworkTxAllowed =
+                #if CAN_SLEEP
+                NetworkCyclicTxAllowed();
+                #else
+                true;
+                #endif
+            if ((!bTxQuiet && bNetworkTxAllowed) || bConfigReply)
+                if (canTransmitTimeout(canDrivers[nBus], CAN_ANY_MAILBOX, &msg, TIME_MS2I(10)) == MSG_OK)
+                    nLastCanTxTime.store(SYS_TIME, std::memory_order_relaxed);
 
             // Pacing between frames, set CAN_TX_MSG_SPLIT to 0 to send at bus rate
             #if CAN_TX_MSG_SPLIT > 0
@@ -110,7 +133,12 @@ void CanRxThread(void *arg)
         msg_t res = canReceiveTimeout(canDrivers[nBus], CAN_ANY_MAILBOX, &msg, TIME_MS2I(100));
         if (res == MSG_OK)
         {
-            nLastCanRxTime = SYS_TIME;
+            nLastCanRxTime.store(SYS_TIME, std::memory_order_relaxed);
+            #if CAN_SLEEP
+            // Network management is on CAN1; activity on either bus delays STOP.
+            if (nBus == 0)
+                NetworkProcessCanFrame(msg);
+            #endif
 
             // Classic CAN DLC 9-15 is legal on the wire but still means 8 data bytes
             if (msg.DLC > 8)
@@ -367,8 +395,9 @@ void UpdateCanFilters()
             #endif
         }
 
-        // Filtering disabled, or more IDs than filter slots - accept everything rather than drop frames
-        WriteFilters(nBus, nIds, nNumIds, !stConfig.stDevice.bCanFilterEnabled || bOverflow);
+        // Accept traffic from unconfigured peers and observe bus inactivity
+        // when distributed sleep is enabled.
+        WriteFilters(nBus, nIds, nNumIds, !stConfig.stDevice.bCanFilterEnabled || bOverflow || bNetworkKeepAwakeEnabled);
     }
 }
 
@@ -383,5 +412,10 @@ void SetCanTxQuiet(bool bQuiet)
 
 uint32_t GetLastCanRxTime()
 {
-    return nLastCanRxTime;
+    return nLastCanRxTime.load(std::memory_order_relaxed);
+}
+
+uint32_t GetLastCanTxTime()
+{
+    return nLastCanTxTime.load(std::memory_order_relaxed);
 }

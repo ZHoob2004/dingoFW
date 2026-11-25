@@ -9,5 +9,6 @@ void StopCan();
 // Rebuild hardware filters from live config (config ID, CAN inputs, keypads), safe while running
 void UpdateCanFilters();
 uint32_t GetLastCanRxTime();
+uint32_t GetLastCanTxTime();
 // Stop all transmit except replies to dingoConfig, used before sleep
 void SetCanTxQuiet(bool bQuiet);

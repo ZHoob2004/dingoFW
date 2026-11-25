@@ -10,3 +10,11 @@
 bool CheckEnterSleep();
 void EnterSleep();
 void EnableLineEventWithPull(ioline_t line, InputPull pull);
+
+// Optional network sleep coordination.
+void NetworkSleepUpdate();
+bool NetworkSleepCanEnter();
+bool NetworkCyclicTxAllowed();
+bool NetworkFeatureEnabled();
+void NetworkProcessCanFrame(const CANRxFrame& frame);
+bool NetworkBuildKeepAwakeFrame(CANTxFrame& frame);

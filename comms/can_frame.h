@@ -11,6 +11,7 @@
 #if defined(CAN_IDE_STD) // bxCAN
 
 template <typename F> inline bool CanIsExt(const F &f) { return f.IDE == CAN_IDE_EXT; }
+template <typename F> inline bool CanIsRemote(const F &f) { return f.RTR != CAN_RTR_DATA; }
 template <typename F> inline uint32_t CanId(const F &f) { return CanIsExt(f) ? f.EID : f.SID; }
 
 template <typename F> inline void CanSetId(F &f, uint32_t nId, bool bExt = false)
@@ -28,6 +29,7 @@ inline void CanClearTxFlags(CANTxFrame &f) { f.RTR = CAN_RTR_DATA; }
 #else // FDCAN
 
 template <typename F> inline bool CanIsExt(const F &f) { return f.common.XTD; }
+template <typename F> inline bool CanIsRemote(const F &f) { return f.common.RTR != 0; }
 template <typename F> inline uint32_t CanId(const F &f) { return CanIsExt(f) ? f.ext.EID : f.std.SID; }
 
 template <typename F> inline void CanSetId(F &f, uint32_t nId, bool bExt = false)

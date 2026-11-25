@@ -9,6 +9,9 @@
 #include "status.h"
 #include "mcu_utils.h"
 #include "device_config.h"
+#include "can_frame.h"
+#include "param_protocol.h"
+#include <atomic>
 
 #if CAN_SLEEP
 // Active logical signals inhibit automatic sleep.
@@ -24,6 +27,206 @@ static uint32_t nUsbDisconnectedTime;
 extern DeviceConfig stConfig;
 bool bSleepRequest;
 
+
+// Dedicated network-management frame directly after each target's existing
+// cyclic range: CANBoard +15, PDM v7 +55, PDM-Max +53, PT-DPDM4 +54, PDM v8 +39.
+// Payload: 'D','N','G',protocol-version(1),base ID little-endian,
+// request flags, rolling sequence.
+namespace
+{
+constexpr uint32_t NETWORK_IDLE_MS = 30000;
+constexpr uint32_t NETWORK_QUIET_MS = 2000;
+constexpr uint32_t NETWORK_INPUT_HOLD_MS = 2000;
+constexpr uint32_t NETWORK_BOOT_HOLD_MS = 2000;
+constexpr uint32_t NETWORK_CYCLIC_ID_OFFSET =
+    CYCLIC_TX_OFFSET + NUM_TX_MSGS;
+constexpr uint8_t NETWORK_PROTOCOL_VERSION = 1;
+constexpr uint8_t NETWORK_KEEP_AWAKE_FLAG = 0x01;
+
+// Validate the ID against the sender's embedded base ID and a known
+// device-specific offset, so peers need no configured device list.
+constexpr uint16_t NETWORK_CANBOARD_OFFSET = 15;
+constexpr uint16_t NETWORK_PDM_OFFSET = 55;
+constexpr uint16_t NETWORK_PDM_MAX_OFFSET = 53;
+constexpr uint16_t NETWORK_PT_PDM_OFFSET = 54;
+constexpr uint16_t NETWORK_PDM_V8_OFFSET = 39;
+static_assert(NETWORK_CYCLIC_ID_OFFSET == NETWORK_CANBOARD_OFFSET ||
+              NETWORK_CYCLIC_ID_OFFSET == NETWORK_PDM_OFFSET ||
+              NETWORK_CYCLIC_ID_OFFSET == NETWORK_PDM_MAX_OFFSET ||
+              NETWORK_CYCLIC_ID_OFFSET == NETWORK_PT_PDM_OFFSET ||
+              NETWORK_CYCLIC_ID_OFFSET == NETWORK_PDM_V8_OFFSET);
+
+std::atomic<uint32_t> nLastNetworkRequest{0};
+std::atomic<bool> bNetworkRuntimeEnabled{false};
+std::atomic<bool> bLocalDemand{false};
+uint32_t nLastInputChange;
+uint32_t nNetworkStart;
+uint16_t nPreviousInputMask;
+bool bNetworkWasEnabled;
+
+uint16_t EnabledDigitalInputMask()
+{
+    uint16_t mask = 0;
+#if NUM_DIG_INPUTS > 0
+    for (uint8_t i = 0; i < NUM_DIG_INPUTS; ++i)
+        if (stConfig.stDigInput[i].bEnabled && GetDigInputVal(i))
+            mask |= (1U << i);
+#endif
+    return mask;
+}
+
+// Only called in DeviceThread. CAN TX/RX consume atomically published state.
+bool ComputeLocalKeepAwake()
+{
+    const uint32_t now = SYS_TIME;
+    if (now - nNetworkStart < NETWORK_BOOT_HOLD_MS ||
+        now - nLastInputChange < NETWORK_INPUT_HOLD_MS ||
+        EnabledDigitalInputMask() != 0)
+        return true;
+
+    // Nodes configured to remain awake keep participating peers awake.
+    if (!stConfig.stDevice.bSleepEnabled || IsParamOpInProgress())
+        return true;
+#if NUM_OUTPUTS > 0
+    for (uint8_t i = 0; i < NUM_OUTPUTS; ++i)
+        if (GetOutputState(i) != ProfetState::Off)
+            return true;
+#endif
+#if NUM_DIG_OUTPUTS > 0
+    for (uint8_t i = 0; i < NUM_DIG_OUTPUTS; ++i)
+        if (GetDigOutputState(i))
+            return true;
+#endif
+#if HAS_USB
+    if (GetUsbConnected())
+        return true;
+#endif
+    return false;
+}
+} // namespace
+
+void NetworkSleepUpdate()
+{
+    if (!bNetworkKeepAwakeEnabled)
+    {
+        bNetworkRuntimeEnabled.store(false, std::memory_order_relaxed);
+        bLocalDemand.store(false, std::memory_order_relaxed);
+        bNetworkWasEnabled = false;
+        return;
+    }
+
+    const uint32_t now = SYS_TIME;
+    if (!bNetworkWasEnabled)
+    {
+        nNetworkStart = now;
+        nLastNetworkRequest.store(now, std::memory_order_relaxed);
+        nLastInputChange = now;
+        nPreviousInputMask = EnabledDigitalInputMask();
+        bNetworkWasEnabled = true;
+    }
+
+    const uint16_t inputs = EnabledDigitalInputMask();
+    if (inputs != nPreviousInputMask)
+    {
+        nPreviousInputMask = inputs;
+        nLastInputChange = now;
+    }
+
+    const bool demand = ComputeLocalKeepAwake();
+    bLocalDemand.store(demand, std::memory_order_relaxed);
+    bNetworkRuntimeEnabled.store(true, std::memory_order_relaxed);
+    // Remote requests refresh the inactivity timer without asserting local demand.
+    if (demand)
+        nLastNetworkRequest.store(now, std::memory_order_relaxed);
+}
+
+void NetworkProcessCanFrame(const CANRxFrame& frame)
+{
+    if (!bNetworkRuntimeEnabled.load(std::memory_order_relaxed))
+        return;
+    if (CanIsExt(frame) || CanIsRemote(frame) ||
+        frame.DLC != 8 ||
+        frame.data8[0] != 'D' || frame.data8[1] != 'N' ||
+        frame.data8[2] != 'G' || frame.data8[3] != NETWORK_PROTOCOL_VERSION ||
+        (frame.data8[6] & ~NETWORK_KEEP_AWAKE_FLAG) != 0)
+        return;
+
+    const uint16_t base = static_cast<uint16_t>(frame.data8[4]) |
+                          (static_cast<uint16_t>(frame.data8[5]) << 8);
+    const uint32_t id = CanId(frame);
+    if (base > 0x7FF || id < base)
+        return;
+    const uint16_t offset = id - base;
+    if (offset != NETWORK_CANBOARD_OFFSET &&
+        offset != NETWORK_PDM_OFFSET &&
+        offset != NETWORK_PDM_MAX_OFFSET &&
+        offset != NETWORK_PT_PDM_OFFSET &&
+        offset != NETWORK_PDM_V8_OFFSET)
+        return;
+
+    if ((frame.data8[6] & NETWORK_KEEP_AWAKE_FLAG) != 0)
+        nLastNetworkRequest.store(SYS_TIME, std::memory_order_relaxed);
+}
+
+bool NetworkBuildKeepAwakeFrame(CANTxFrame& frame)
+{
+    // Called only from the cyclic CAN transmit thread.
+    if (!bNetworkRuntimeEnabled.load(std::memory_order_relaxed) ||
+        !bLocalDemand.load(std::memory_order_relaxed))
+        return false;
+
+    const uint32_t id = stConfig.stDevice.nBaseId + NETWORK_CYCLIC_ID_OFFSET;
+    if (id > 0x7FF)
+        return false;
+
+    static uint8_t sequence = 0;
+    CanSetId(frame, id);
+    frame.DLC = 8;
+    CanClearTxFlags(frame);
+    frame.data8[0] = 'D';
+    frame.data8[1] = 'N';
+    frame.data8[2] = 'G';
+    frame.data8[3] = NETWORK_PROTOCOL_VERSION;
+    frame.data8[4] = static_cast<uint8_t>(stConfig.stDevice.nBaseId);
+    frame.data8[5] = static_cast<uint8_t>(stConfig.stDevice.nBaseId >> 8);
+    frame.data8[6] = NETWORK_KEEP_AWAKE_FLAG;
+    frame.data8[7] = sequence++;
+    return true;
+}
+
+bool NetworkFeatureEnabled()
+{
+    return bNetworkRuntimeEnabled.load(std::memory_order_relaxed);
+}
+
+bool NetworkCyclicTxAllowed()
+{
+    if (!bNetworkRuntimeEnabled.load(std::memory_order_relaxed) ||
+        bLocalDemand.load(std::memory_order_relaxed))
+        return true;
+    const uint32_t last = nLastNetworkRequest.load(std::memory_order_relaxed);
+    return (SYS_TIME - last) < (NETWORK_IDLE_MS - NETWORK_QUIET_MS);
+}
+
+bool NetworkSleepCanEnter()
+{
+    if (!bNetworkRuntimeEnabled.load(std::memory_order_relaxed) ||
+        bLocalDemand.load(std::memory_order_relaxed))
+        return false;
+    // Read timestamps before sampling now, avoiding unsigned underflow
+    // when an interrupt/thread publishes a newer timestamp concurrently.
+    const uint32_t request = nLastNetworkRequest.load(std::memory_order_relaxed);
+    const uint32_t rx = GetLastCanRxTime();
+    const uint32_t tx = GetLastCanTxTime();
+    const uint32_t now = SYS_TIME;
+    if (now - request < NETWORK_IDLE_MS)
+        return false;
+    // After cyclic traffic pauses, require 2s without accepted RX or TX
+    // mailbox submissions before STOP.
+    if (now - rx < NETWORK_QUIET_MS || now - tx < NETWORK_QUIET_MS)
+        return false;
+    return true;
+}
 
 bool CheckEnterSleep()
 {
@@ -85,6 +288,17 @@ bool CheckEnterSleep()
                   #endif
                   ((SYS_TIME - nAllOutputsOffTime) > SLEEP_TIMEOUT) &&
                   (nCanRxIdleTime > SLEEP_TIMEOUT);
+
+    // Peer keep-awake requests replace the raw CAN RX inactivity timeout.
+    // Local inhibitors and explicit sleep requests retain their meaning.
+    if (bNetworkKeepAwakeEnabled)
+    {
+        bEnterSleep = stConfig.stDevice.bSleepEnabled && nNumActiveSignals == 0 &&
+            #if HAS_USB
+            !GetUsbConnected() &&
+            #endif
+            !IsParamOpInProgress() && NetworkSleepCanEnter();
+    }
 
     return bEnterSleep || bSleepRequest || *pVarMap[stConfig.stDevice.nForceSleepInput];
 }

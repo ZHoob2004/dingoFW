@@ -92,5 +92,9 @@ struct DeviceConfig{
 extern DeviceConfig stConfig;
 extern DeviceConfig stConfigTemp; // Used for staging new config before applying
 
+// Independent settings preserve the existing DeviceConfig layout and CRC.
+extern bool bNetworkKeepAwakeEnabled;
+extern bool bNetworkKeepAwakeEnabledTemp;
+
 void InitConfig();
 bool WriteConfig();

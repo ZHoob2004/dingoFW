@@ -3,6 +3,13 @@
 #include "crc.h"
 #include "param_protocol.h"
 #include "hardware/mb85rc.h"
+#include "network_config.h"
+#include "lua_script.h"
+
+#if HAS_EXT_MEMORY && HAS_LUA
+static_assert(sizeof(DeviceConfig) + sizeof(uint32_t) + sizeof(NetworkConfigRecord) <= LUA_FRAM_ADDR,
+              "Configuration and network settings overlap Lua script storage");
+#endif
 
 #if HAS_EXT_MEMORY
 MB85RC fram(EXT_MEMORY_I2C, MB85RC_I2CADDR_DEFAULT);
@@ -35,6 +42,12 @@ bool ReadConfigExt()
         return false; // Data corrupt or changed
     }
     
+    bNetworkKeepAwakeEnabled = false;
+    NetworkConfigRecord record{};
+    if (fram.Read(sizeof(stConfig) + sizeof(uint32_t),
+                  reinterpret_cast<uint8_t*>(&record), sizeof(record)) &&
+        IsValidNetworkConfigRecord(record))
+        bNetworkKeepAwakeEnabled = record.enabled != 0;
     return true;
     #else
     return false;
@@ -63,7 +76,9 @@ bool WriteConfigExt(){
         return false;
     }
     
-    return true;
+    NetworkConfigRecord record = MakeNetworkConfigRecord(bNetworkKeepAwakeEnabled);
+    return fram.Write(sizeof(stConfig) + sizeof(uint32_t),
+                      reinterpret_cast<uint8_t*>(&record), sizeof(record));
     #else
     return false;
     #endif

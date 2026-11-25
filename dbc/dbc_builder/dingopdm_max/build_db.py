@@ -1,5 +1,6 @@
 
 import cantools
+from utils.network_keep_awake import build_network_keep_awake
 import dingopdm_max
 
 def build_db(base_id):
@@ -34,5 +35,7 @@ def build_db(base_id):
     db.messages.append(dingopdm_max.build_msg_24(base_id + 2))
     db.messages.append(dingopdm_max.build_msg_25(base_id + 2))
     db.messages.append(dingopdm_max.build_msg_26(base_id + 2))
+
+    db.messages.append(build_network_keep_awake(base_id, 53))
 
     return db

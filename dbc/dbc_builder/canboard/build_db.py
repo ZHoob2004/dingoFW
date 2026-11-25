@@ -1,5 +1,6 @@
 
 import cantools
+from utils.network_keep_awake import build_network_keep_awake
 import canboard
 
 def build_db(base_id):
@@ -16,5 +17,7 @@ def build_db(base_id):
     db.messages.append(canboard.build_msg_6(base_id + 2))
     db.messages.append(canboard.build_msg_7(base_id + 2))
     db.messages.append(canboard.build_msg_8(base_id + 2))
+
+    db.messages.append(build_network_keep_awake(base_id, 15))
 
     return db

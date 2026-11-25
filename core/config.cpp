@@ -3,6 +3,10 @@
 #include "crc.h"
 #include "param_protocol.h"
 #include "config_ext.h"
+#include "network_config.h"
+
+bool bNetworkKeepAwakeEnabled;
+bool bNetworkKeepAwakeEnabledTemp;
 
 //Try to read config from internal flash first
 //If it fails, try external memory
@@ -11,8 +15,11 @@
 // CRC goes on the next 8 byte boundary, G4 flash programs 8 byte double words that can only be written once
 #define CONFIG_CRC_OFFSET (CONFIG_FLASH_OFFSET + ((sizeof(DeviceConfig) + 7U) & ~7U))
 
-// Config + CRC must fit in the reserved 2KB flash pages
-static_assert(CONFIG_CRC_OFFSET - CONFIG_FLASH_OFFSET + sizeof(uint32_t) <= CONFIG_NUM_SECTORS * 2048U, "DeviceConfig too big for reserved config flash");
+// The sidecar starts in the next flash programming double word after the CRC.
+#define NETWORK_CONFIG_OFFSET (CONFIG_CRC_OFFSET + 8U)
+
+// Config, CRC and network settings must fit in the reserved 2KB flash pages.
+static_assert(NETWORK_CONFIG_OFFSET - CONFIG_FLASH_OFFSET + sizeof(NetworkConfigRecord) <= CONFIG_NUM_SECTORS * 2048U, "Configuration too big for reserved config flash");
 #endif
 
 bool ReadConfig(){
@@ -52,6 +59,12 @@ bool ReadConfig(){
     }
 
     stConfig = tempConfig;
+    bNetworkKeepAwakeEnabled = false;
+    NetworkConfigRecord record{};
+    if (flashRead(CONFIG_FLASH, NETWORK_CONFIG_OFFSET, sizeof(record),
+                  reinterpret_cast<uint8_t*>(&record)) == FLASH_NO_ERROR &&
+        IsValidNetworkConfigRecord(record))
+        bNetworkKeepAwakeEnabled = record.enabled != 0;
     return true;
     #else
     return false;
@@ -98,7 +111,12 @@ bool WriteConfig(){
     err = flashProgram(CONFIG_FLASH, CONFIG_CRC_OFFSET,
                        sizeof(uint32_t), (const uint8_t*)&crc);
 
-    return (err == FLASH_NO_ERROR);
+    if (err != FLASH_NO_ERROR)
+        return false;
+
+    const NetworkConfigRecord record = MakeNetworkConfigRecord(bNetworkKeepAwakeEnabled);
+    return flashProgram(CONFIG_FLASH, NETWORK_CONFIG_OFFSET, sizeof(record),
+                        reinterpret_cast<const uint8_t*>(&record)) == FLASH_NO_ERROR;
     #else
     return false;
     #endif
