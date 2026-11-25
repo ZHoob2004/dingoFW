@@ -12,9 +12,21 @@ static blt_int32u nBaudrate = 500000u;
 static void EnterDfu(void)
 {
   RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+#if defined(STM32F302xC)
+  // F302 exposes the memory remap field in CFGR1 rather than MEMRMP.
+  SYSCFG->CFGR1 = (SYSCFG->CFGR1 & ~SYSCFG_CFGR1_MEM_MODE) | 1u;
+  SCB->VTOR = DINGO_SYSTEM_MEMORY;
+  const blt_int32u *vectors = (const blt_int32u *)DINGO_SYSTEM_MEMORY;
+  __DSB();
+  __ISB();
+  // Avoid accessing the old C stack after switching MSP.
+  __asm volatile ("msr msp, %0\n\tbx %1" : : "r"(vectors[0]), "r"(vectors[1]) : "memory");
+  __builtin_unreachable();
+#else
   SYSCFG->MEMRMP = 1u; // System memory at 0
   __set_MSP(((blt_int32u *)DINGO_SYSTEM_MEMORY)[0]);
   ((void (*)(void))((blt_int32u *)DINGO_SYSTEM_MEMORY)[1])();
+#endif
 }
 #endif
 

@@ -3,6 +3,7 @@ import unittest
 import canboard
 import dingopdm
 import dingopdm_max
+import linboard
 from utils.network_keep_awake import build_network_db
 
 
@@ -10,6 +11,7 @@ class NetworkKeepAwakeTest(unittest.TestCase):
     def test_device_builders(self):
         cases = [
             (canboard.build_db(0x640), 0x640, 15),
+            (linboard.build_db(0x680, "test"), 0x680, 3),
             (dingopdm.build_db(0x0DE), 0x0DE, 55),
             (dingopdm_max.build_db(0x0DE), 0x0DE, 53),
             (build_network_db("PT-DPDM", "test", 0x0DE, 54), 0x0DE, 54),

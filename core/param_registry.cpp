@@ -23,19 +23,29 @@ const ParamInfo stParams[] = {
     #endif
 
     // CAN Inputs (0x1300+)
+    #if NUM_CAN_INPUTS > 0
     ALL_CAN_INPUT_PARAMS,
+    #endif
 
     // Virtual Inputs (0x1400+)
+    #if NUM_VIRT_INPUTS > 0
     ALL_VIRTUAL_INPUT_PARAMS,
+    #endif
 
     // Conditions (0x1500+)
+    #if NUM_CONDITIONS > 0
     ALL_CONDITION_PARAMS,
+    #endif
 
     // Counters (0x1600+)
+    #if NUM_COUNTERS > 0
     ALL_COUNTER_PARAMS,
+    #endif
 
     // Flashers (0x1700+)
+    #if NUM_FLASHERS > 0
     ALL_FLASHER_PARAMS,
+    #endif
 
     #if HAS_STARTER_DISABLE > 0
     // Starter (0x1800)
@@ -61,7 +71,9 @@ const ParamInfo stParams[] = {
     #endif
 
     // CAN Outputs (0x2000+)
+    #if NUM_CAN_OUTPUTS > 0
     ALL_CAN_OUTPUT_PARAMS,
+    #endif
 
     #if NUM_DIG_OUTPUTS > 0
     // Digital Outputs (0x2100+)

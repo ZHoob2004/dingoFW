@@ -29,7 +29,7 @@ bool bSleepRequest;
 
 
 // Dedicated network-management frame directly after each target's existing
-// cyclic range: CANBoard +15, PDM v7 +55, PDM-Max +53, PT-DPDM4 +54, PDM v8 +39.
+// cyclic range: LINBoard +3, CANBoard +15, PDM v7 +55, PDM-Max +53, PT-DPDM4 +54, PDM v8 +39.
 // Payload: 'D','N','G',protocol-version(1),base ID little-endian,
 // request flags, rolling sequence.
 namespace
@@ -45,12 +45,14 @@ constexpr uint8_t NETWORK_KEEP_AWAKE_FLAG = 0x01;
 
 // Validate the ID against the sender's embedded base ID and a known
 // device-specific offset, so peers need no configured device list.
+constexpr uint16_t NETWORK_LINBOARD_OFFSET = 3;
 constexpr uint16_t NETWORK_CANBOARD_OFFSET = 15;
 constexpr uint16_t NETWORK_PDM_OFFSET = 55;
 constexpr uint16_t NETWORK_PDM_MAX_OFFSET = 53;
 constexpr uint16_t NETWORK_PT_PDM_OFFSET = 54;
 constexpr uint16_t NETWORK_PDM_V8_OFFSET = 39;
-static_assert(NETWORK_CYCLIC_ID_OFFSET == NETWORK_CANBOARD_OFFSET ||
+static_assert(NETWORK_CYCLIC_ID_OFFSET == NETWORK_LINBOARD_OFFSET ||
+              NETWORK_CYCLIC_ID_OFFSET == NETWORK_CANBOARD_OFFSET ||
               NETWORK_CYCLIC_ID_OFFSET == NETWORK_PDM_OFFSET ||
               NETWORK_CYCLIC_ID_OFFSET == NETWORK_PDM_MAX_OFFSET ||
               NETWORK_CYCLIC_ID_OFFSET == NETWORK_PT_PDM_OFFSET ||
@@ -157,7 +159,8 @@ void NetworkProcessCanFrame(const CANRxFrame& frame)
     if (base > 0x7FF || id < base)
         return;
     const uint16_t offset = id - base;
-    if (offset != NETWORK_CANBOARD_OFFSET &&
+    if (offset != NETWORK_LINBOARD_OFFSET &&
+        offset != NETWORK_CANBOARD_OFFSET &&
         offset != NETWORK_PDM_OFFSET &&
         offset != NETWORK_PDM_MAX_OFFSET &&
         offset != NETWORK_PT_PDM_OFFSET &&
@@ -355,6 +358,7 @@ void EnterSleep()
     // Let the transceiver settle in standby before any wake source is armed
     chThdSleepMilliseconds(20);
 
+    #if NUM_DIG_INPUTS > 0
     // A PWM input's edge event would wake it, and the wake event below needs the same EXTI line
     for(uint8_t i = 0; i < NUM_DIG_INPUTS; i++)
         digIn[i].StopPwm();
@@ -377,6 +381,8 @@ void EnterSleep()
             EnableLineEventWithPull(digIn[i].GetLine(), stConfig.stDigInput[i].ePull);
     }
 
+    #endif
+
     // CAN receive detection - can be disabled in config
     if(!stConfig.stDevice.bDisableCanWake)
     {
@@ -398,7 +404,7 @@ void EnterSleep()
     EXTI_PENDING = 0x0000FFFF;
     NVIC_ClearPendingIRQ(EXTI0_IRQn);
     NVIC_ClearPendingIRQ(EXTI1_IRQn);
-    #if defined(STM32F303x8)
+    #if defined(STM32F303x8) || defined(STM32F302xC)
     NVIC_ClearPendingIRQ(EXTI2_TSC_IRQn);
     #else
     NVIC_ClearPendingIRQ(EXTI2_IRQn);

@@ -178,6 +178,40 @@ static const USBDescriptor vcom_strings[] = {
     {sizeof vcom_string2, vcom_string2},
     {sizeof vcom_string3, vcom_string3}};
 
+// Distinct product identity and factory UID distinguish bridge instances.
+#if defined(LINBOARD_V1)
+static const uint8_t linboard_product_string[] = {
+    USB_DESC_BYTE(46),
+    USB_DESC_BYTE(USB_DESCRIPTOR_STRING),
+    'D', 0, 'i', 0, 'n', 0, 'g', 0, 'o', 0, ' ', 0, 'L', 0, 'I', 0, 'N', 0, 'B', 0, 'o', 0, 'a', 0, 'r', 0, 'd', 0, ' ', 0, 'U', 0, 'S', 0, 'B', 0, '-', 0, 'C', 0, 'A', 0, 'N', 0
+};
+static const USBDescriptor linboard_product_descriptor = {
+    sizeof linboard_product_string, linboard_product_string
+};
+
+// 24 hex digits (the full factory-programmed 96-bit STM32F302 UID).
+static uint8_t linboard_serial_string[50] = {
+    USB_DESC_BYTE(50), USB_DESC_BYTE(USB_DESCRIPTOR_STRING)
+};
+static const USBDescriptor linboard_serial_descriptor = {
+    sizeof linboard_serial_string, linboard_serial_string
+};
+
+static void init_linboard_serial() {
+    constexpr uintptr_t UID_BASE_ADDR = 0x1FFFF7ACU; // STM32F302 RM0365
+    const volatile uint32_t *uid = reinterpret_cast<const volatile uint32_t *>(UID_BASE_ADDR);
+    static constexpr char hex[] = "0123456789ABCDEF";
+    for (uint32_t word = 0; word < 3; ++word) {
+        const uint32_t value = uid[word];
+        for (uint32_t digit = 0; digit < 8; ++digit) {
+            const uint32_t shift = 28U - 4U * digit;
+            const size_t outIndex = 2U + 2U * (word * 8U + digit);
+            linboard_serial_string[outIndex] = static_cast<uint8_t>(hex[(value >> shift) & 0x0FU]);
+        }
+    }
+}
+#endif
+
 /*
  * Handles the GET_DESCRIPTOR callback. All required descriptors must be
  * handled here.
@@ -197,6 +231,12 @@ static const USBDescriptor *get_descriptor(USBDriver *usbp,
     case USB_DESCRIPTOR_CONFIGURATION:
         return &vcom_configuration_descriptor;
     case USB_DESCRIPTOR_STRING:
+        #if defined(LINBOARD_V1)
+        if (dindex == 2U)
+            return &linboard_product_descriptor;
+        if (dindex == 3U)
+            return &linboard_serial_descriptor;
+        #endif
         if (dindex < 4)
             return &vcom_strings[dindex];
     }
@@ -390,48 +430,34 @@ void UsbTxThread(void *)
     }
 }
 
-bool Parse(uint8_t *data, uint8_t dataLen, CANRxFrame *frame)
+// Dingo USB uses CR-terminated standard CAN frames. Ignore adapter
+// initialization commands (C/S/O) rather than treating them as stale frames.
+static bool Parse(const uint8_t *data, size_t dataLen, CANRxFrame *frame)
 {
-    uint8_t firstPos;
-
-    if (dataLen < 5)
+    if (dataLen < 6 || data[0] != 't' || data[dataLen - 1] != '\r')
         return false;
 
-    // Convert from ASCII (2nd character to end)
-    for (uint8_t i = 1; i < dataLen; i++)
-    {
-        // Lowercase letters
-        if (data[i] >= 'a')
-            data[i] = data[i] - 'a' + 10;
-        // Uppercase letters
-        else if (data[i] >= 'A')
-            data[i] = data[i] - 'A' + 10;
-        // Numbers
-        else
-            data[i] = data[i] - '0';
+    auto hex = [](uint8_t c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return -1;
+    };
+    int a = hex(data[1]), b = hex(data[2]), c = hex(data[3]), dlc = hex(data[4]);
+    if (a < 0 || a > 7 || b < 0 || c < 0 || dlc < 0 || dlc > 8)
+        return false;
+    // Accept both canonical variable-length SLCAN and legacy padded Dingo frames.
+    if (dataLen != static_cast<size_t>(6 + 2 * dlc) && dataLen != 22)
+        return false;
+
+    *frame = {};
+    CanSetId(*frame, (a << 8) | (b << 4) | c);
+    frame->DLC = dlc;
+    for (int i = 0; i < dlc; ++i) {
+        int hi = hex(data[5 + 2 * i]), lo = hex(data[6 + 2 * i]);
+        if (hi < 0 || lo < 0) return false;
+        frame->data8[i] = (hi << 4) | lo;
     }
-
-    if (data[0] != 't')
-        return false;
-
-    uint8_t nDlc = data[4];
-    if (nDlc > 8)
-        return false;
-
-    firstPos = 5;
-
-    if (dataLen < (uint16_t)firstPos + 2 * (uint16_t)nDlc)
-        return false; // Line too short to contain nDlc data bytes
-
-    CanSetId(*frame, ((data[1] & 0xF) << 8) + ((data[2] & 0xF) << 4) + (data[3] & 0xF));
-    frame->DLC = nDlc;
-
-    for (int i = 0; i < frame->DLC; i++)
-    {
-        frame->data8[i] = ((data[i + firstPos] & 0xF) << 4) + (data[i + firstPos + 1] & 0xF);
-        firstPos++;
-    }
-
     return true;
 }
 
@@ -511,11 +537,16 @@ msg_t InitUsb()
 {
     msg_t ret;
 
+    #if defined(LINBOARD_V1)
+    // USBv1 has an external D+ pull-up and no software connect hook.
+    init_linboard_serial();
+    #else
     usbDisconnectBus(serusbcfg.usbp);
 
     //Wait for disconnect if USB is already connected
     if(palReadLine(LINE_USB_VBUS) == PAL_HIGH)
         chThdSleepMilliseconds(1500);
+    #endif
 
     sduObjectInit(&SDU1);
 
@@ -527,7 +558,9 @@ msg_t InitUsb()
     if (ret != MSG_OK)
         return ret;
 
+    #if !defined(LINBOARD_V1)
     usbConnectBus(serusbcfg.usbp);
+    #endif
 
     chThdCreateStatic(waUsbTxThread, sizeof(waUsbTxThread), NORMALPRIO + 1, UsbTxThread, nullptr);
     chThdCreateStatic(waUsbRxThread, sizeof(waUsbRxThread), NORMALPRIO + 1, UsbRxThread, nullptr);

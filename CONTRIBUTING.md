@@ -22,7 +22,7 @@ pixi run build-fw BOARD=dingopdm_v7
 pixi run clean
 ```
 
-Initialize the ChibiOS submodule as shown above first. Pixi provides Make and Arm GCC 14.2 (matching the rusEFI Pixi setup); CI still uses 13.3.rel1. The default board is `canboard_v2`. You can also select `dingopdmmax_v1` or `pt-dpdm4_1`.
+Initialize the ChibiOS submodule as shown above first. Pixi provides Make and Arm GCC 14.2 (matching the rusEFI Pixi setup); CI still uses 13.3.rel1. The default board is `canboard_v2`. You can also select `dingopdmmax_v1`, `pt-dpdm4_1`, `dingopdm_v8` or `linboard_v1`.
 
 The output goes to `build/<board>.hex|.bin|.elf`. Run `make clean` (or `pixi run clean`) before you switch boards. Board definitions are in `boards/`, and OpenOCD target files are in `target/`.
 
@@ -30,15 +30,15 @@ Before you open a PR, build **every board** your change could affect. CI builds 
 
 ## Bootloader
 
-Every board runs behind an [OpenBLT](https://github.com/feaser/openblt) CAN bootloader (`bootloader/`, OpenBLT is the `bootloader/openblt` submodule). The app is linked after it: `0x08004000` on the PDMs, `0x08002000` on the CANBoard. Without the bootloader on the chip, the app doesn't start.
+Every board runs behind an [OpenBLT](https://github.com/feaser/openblt) CAN bootloader (`bootloader/`, OpenBLT is the `bootloader/openblt` submodule). The app is linked after it: `0x08004000` on the PDMs and LINBoard, `0x08002000` on the CANBoard. Without the bootloader on the chip, the app doesn't start.
 
 ```bash
 make -C bootloader          # or: pixi run build-bl
 ```
 
-One image per MCU, in `bootloader/<mcu>/build/`: `stm32f446` (dingoPDM v7, dingoPDM-Max, PT-DPDM4), `stm32g474` (dingoPDM v8), `stm32f303` (CANBoard). Flash it once over SWD or DFU. A mass erase removes it. The VS Code debug configs load the bootloader and the app together.
+One image per MCU, in `bootloader/<mcu>/build/`: `stm32f446` (dingoPDM v7, dingoPDM-Max, PT-DPDM4), `stm32g474` (dingoPDM v8), `stm32f303` (CANBoard), `stm32f302` (LINBoard). Flash it once over SWD or DFU. A mass erase removes it. The VS Code debug configs load the bootloader and the app together.
 
-The Bootloader request (cmd 33, "BOOTL") with byte 6 = 1 resets into OpenBLT. XCP then runs on base ID + 12 (host to module) and + 13 (module to host), at the module's bitrate. Updates use `build/<board>.srec`. If the module loses power during an update, it comes back in the bootloader on the default base ID (`0x0DE` on the PDMs, `0x640` on the CANBoard) at 500K. Byte 6 = 0 still goes to the ST USB DFU bootloader on boards with USB.
+The Bootloader request (cmd 33, "BOOTL") with byte 6 = 1 resets into OpenBLT. XCP then runs on base ID + 12 (host to module) and + 13 (module to host), at the module's bitrate. Updates use `build/<board>.srec`. If the module loses power during an update, it comes back in the bootloader on the default base ID (`0x0DE` on the PDMs, `0x640` on the CANBoard, `0x680` on the LINBoard) at 500K. Byte 6 = 0 still goes to the ST USB DFU bootloader on boards with USB.
 
 OpenBLT's demo folders are 1.5GB checked out. To keep only what the build uses:
 

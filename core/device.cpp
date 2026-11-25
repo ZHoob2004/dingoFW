@@ -335,6 +335,9 @@ void States(bool additionalInputActivity)
 
     if (eState == DeviceState::Sleep)
     {
+        #if defined(LINBOARD_V1)
+        palClearLine(LINE_CAN_LED);
+        #endif
         EnterSleep();
     }
     #endif
@@ -611,11 +614,13 @@ void InitVarMap()
         pVarMap[index++] = &mathBlock[i].fVal;
     #endif
 
+    #if NUM_DIG_INPUTS > 0
     for (uint8_t i = 0; i < NUM_DIG_INPUTS; i++)
     {
         pVarMap[index++] = &digIn[i].fDuty;
         pVarMap[index++] = &digIn[i].fFreq;
     }
+    #endif
 
     #if HAS_LUA
     for (uint8_t i = 0; i < NUM_LUA_OUTPUTS; i++)

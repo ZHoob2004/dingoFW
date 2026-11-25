@@ -20,7 +20,7 @@ CSRC := $(wildcard $(SRC)/*.c) \
         ../common/hooks.c \
         $(filter-out flash_layout.c,$(wildcard *.c))
 
-INC := . ../common $(SRC) $(TGT) $(HAL_DIR)/Inc $(CMSIS_DIR)/Include $(wildcard $(CMSIS_DIR)/Device/ST/*/Include) $(HAL_CONF)
+INC := . ../common $(SRC) $(TGT) $(HAL_DIR)/Inc $(CMSIS_DIR)/Include $(wildcard $(CMSIS_DIR)/Device/ST/*/Include) $(HAL_CONF) $(EXTRA_INC)
 
 MCUFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS   := $(MCUFLAGS) -Os -g3 -Wall -ffunction-sections -fdata-sections -fno-strict-aliasing \

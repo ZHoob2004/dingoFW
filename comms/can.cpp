@@ -275,6 +275,12 @@ void CanRxThread(void *arg)
                 NetworkProcessCanFrame(msg);
             #endif
 
+            #if defined(LINBOARD_V1)
+            // The bridge's Dingo USB transport carries standard data frames only.
+            if (CanIsExt(msg) || CanIsRemote(msg))
+                continue;
+            #endif
+
             // Classic CAN DLC 9-15 is legal on the wire but still means 8 data bytes
             if (msg.DLC > 8)
                 msg.DLC = 8;
